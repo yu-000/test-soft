@@ -1,21 +1,25 @@
 """
 2-Button Rhythm Game
 Controls: F (left lane) / J (right lane)
-Ported easily to 4-button by changing LANES config.
+
+Usage:
+  python rhythm_game.py                        # auto-generated chart
+  python rhythm_game.py chart.json             # native 2-button JSON
+  python rhythm_game.py song.bms               # 4-button BMS → 2-button
+  python rhythm_game.py song.bms --map 11:0,12:0,13:1,14:1  # custom lane map
 """
 
 import pygame
 import sys
-import random
-import math
+import argparse
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 # ─────────────────────────────────────────────
-#  CONFIG  (change LANES to 4 for 4-button port)
+#  CONFIG
 # ─────────────────────────────────────────────
-LANES = 2                     # 2 or 4
-KEYS  = [pygame.K_f, pygame.K_j]   # extend to [F,G,H,J] for 4-button
+LANES = 2
+KEYS  = [pygame.K_f, pygame.K_j]
 
 SCREEN_W, SCREEN_H = 480, 720
 FPS = 60
@@ -31,8 +35,8 @@ BG_COLOR        = (10, 10, 20)
 LANE_COLOR      = (25, 25, 45)
 LANE_LINE_COLOR = (50, 50, 80)
 HIT_LINE_COLOR  = (200, 200, 255)
-NOTE_COLORS     = [(80, 160, 255), (255, 100, 160)]  # extend for 4 lanes
-KEY_LABELS      = ["F", "J"]                          # extend for 4 lanes
+NOTE_COLORS     = [(80, 160, 255), (255, 100, 160)]
+KEY_LABELS      = ["F", "J"]
 PERFECT_COLOR   = (255, 240, 80)
 GOOD_COLOR      = (100, 255, 160)
 BAD_COLOR       = (255, 140, 60)
@@ -62,8 +66,7 @@ class LaneEffect:
     alpha: int = 0
 
 # ─────────────────────────────────────────────
-#  CHART GENERATOR
-#  (Replace this with real chart data later)
+#  CHART GENERATOR  (fallback when no file given)
 # ─────────────────────────────────────────────
 def generate_chart(lanes: int, total_beats: int = 48) -> List[Note]:
     notes = []
@@ -81,6 +84,27 @@ def generate_chart(lanes: int, total_beats: int = 48) -> List[Note]:
         p += 1
     return notes
 
+
+# ─────────────────────────────────────────────
+#  CHART FILE LOADER
+# ─────────────────────────────────────────────
+def load_chart_file(path: str, lane_map_str: Optional[str] = None):
+    """
+    Load a BMS/JSON chart and return (notes, bpm, title).
+    lane_map_str example: "11:0,12:0,13:1,14:1"
+    """
+    from chart_loader import load_chart, DEFAULT_LANE_MAP
+
+    lane_map = None
+    if lane_map_str:
+        lane_map = {}
+        for pair in lane_map_str.split(","):
+            ch, ln = pair.strip().split(":")
+            lane_map[ch.upper()] = int(ln)
+
+    chart = load_chart(path, lane_map=lane_map, note_class=Note)
+    return chart.notes, chart.bpm, chart.title
+
 # ─────────────────────────────────────────────
 #  HELPERS
 # ─────────────────────────────────────────────
@@ -96,19 +120,31 @@ def draw_rounded_rect(surf, color, rect, radius=12):
 #  GAME
 # ─────────────────────────────────────────────
 class RhythmGame:
-    def __init__(self):
+    def __init__(self, chart_path: Optional[str] = None,
+                 lane_map_str: Optional[str] = None):
         pygame.init()
-        pygame.display.set_caption("2-Button Rhythm Game")
         self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
         self.clock  = pygame.time.Clock()
         self.font_big   = pygame.font.SysFont("monospace", 48, bold=True)
         self.font_med   = pygame.font.SysFont("monospace", 28, bold=True)
         self.font_small = pygame.font.SysFont("monospace", 20)
+
+        # Load chart once; reset() reuses it
+        if chart_path:
+            self._notes_src, self._bpm, self._title = load_chart_file(
+                chart_path, lane_map_str)
+        else:
+            self._notes_src = generate_chart(LANES)
+            self._bpm  = BPM
+            self._title = "2-Button Rhythm Game"
+
+        pygame.display.set_caption(self._title)
         self.reset()
 
     def reset(self):
-        self.notes      = generate_chart(LANES)
-        self.beat_time  = 60.0 / BPM        # seconds per beat
+        # Deep-copy notes so hit/missed flags reset each retry
+        self.notes = [Note(lane=n.lane, beat=n.beat) for n in self._notes_src]
+        self.beat_time  = 60.0 / self._bpm  # seconds per beat
         self.elapsed    = 0.0               # seconds since start
         self.score      = 0
         self.combo      = 0
@@ -394,4 +430,9 @@ class RhythmGame:
 
 
 if __name__ == "__main__":
-    RhythmGame().run()
+    parser = argparse.ArgumentParser(description="2-Button Rhythm Game")
+    parser.add_argument("chart", nargs="?", help="Chart file (.bms/.bme/.json)")
+    parser.add_argument("--map", dest="lane_map",
+                        help='BMS channel→lane map, e.g. "11:0,12:0,13:1,14:1"')
+    args = parser.parse_args()
+    RhythmGame(chart_path=args.chart, lane_map_str=args.lane_map).run()
